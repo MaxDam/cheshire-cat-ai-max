@@ -9,7 +9,7 @@ from langchain_core.prompts.prompt import PromptTemplate
 from enum import Enum
 from cat.log import log
 import json
-
+import re
 
 # Conversational Form State
 class CatFormState(Enum):
@@ -50,6 +50,24 @@ class CatForm:  # base model of forms
     # Check user confirm the form data
     def confirm(self) -> bool:
         
+        prompt = self.confirm_prompt()
+
+        # Escape curly braces in the prompt
+        prompt = prompt.replace("{", "{{").replace("}", "}}")
+
+        # Invoke LLM chain
+        extraction_chain = LLMChain(
+            prompt     = PromptTemplate.from_template(prompt),
+            llm        = self._cat._llm,
+            verbose    = True,
+            output_key = "output"
+        )
+        response = extraction_chain.invoke({"stop": ["```"]})["output"]
+        
+        # Check if "true" is present in the response
+        return "true" in response.lower()
+    
+    def confirm_prompt(self):
         # Get user message
         user_message = self.cat.working_memory["user_message_json"]["text"]
         
@@ -69,19 +87,37 @@ JSON:
 ```json
 {{
     "confirm": """
-
-        # Queries the LLM and check if user is agree or not
-        response = self.cat.llm(confirm_prompt, stream=True)
-        return "true" in response.lower()
         
+        return confirm_prompt
+
     # Check if the user wants to exit the form
     # it is run at the befginning of every form.next()
     def check_exit_intent(self) -> bool:
 
-        # TODO: add exit examples
+        prompt = self.check_exit_prompt()
+        
+        # Escape curly braces in the prompt
+        prompt = prompt.replace("{", "{{").replace("}", "}}")
 
+        # Invoke LLM chain
+        extraction_chain = LLMChain(
+            prompt     = PromptTemplate.from_template(prompt),
+            llm        = self._cat._llm,
+            verbose    = True,
+            output_key = "output"
+        )
+        response = extraction_chain.invoke({"stop": ["```"]})["output"]
+        
+        # Check if "true" is present in the response
+        return "true" in response.lower()
+
+    def check_exit_prompt(self):
+        
         # Get user message
         history = self.stringify_convo_history()
+
+        # Get user message
+        user_message = self.cat.working_memory["user_message_json"]["text"]
 
         # Stop examples
         stop_examples = """
@@ -94,7 +130,8 @@ Examples where {"exit": true}:
 
         # Check exit prompt
         check_exit_prompt = \
-f"""Your task is to produce a JSON representing whether a user wants to exit or not.
+f"""Your task is to produce a JSON representing whether a user wants to exit or not, based on the user message.
+If you are not sure answer `false`.
 JSON must be in this format:
 ```json
 {{
@@ -104,18 +141,15 @@ JSON must be in this format:
 
 {stop_examples}
 
-This is the conversation:
-
-{history}
+###User Message:
+{user_message}
 
 JSON:
 ```json
 {{
     "exit": """
-
-        # Queries the LLM and check if user is agree or not
-        response = self.cat.llm(check_exit_prompt, stream=True)
-        return "true" in response.lower()
+    
+        return check_exit_prompt
 
     # Execute the dialogue step
     def next(self):
@@ -218,6 +252,9 @@ JSON:
         prompt = self.extraction_prompt()
         log.debug(prompt)
 
+        # Escape curly braces in the prompt
+        prompt = prompt.replace("{", "{{").replace("}", "}}")
+
         # Invoke LLM chain
         extraction_chain = LLMChain(
             prompt     = PromptTemplate.from_template(prompt),
@@ -225,7 +262,11 @@ JSON:
             verbose    = True,
             output_key = "output"
         )
-        json_str = extraction_chain.invoke({"stop": ["```"]})["output"]
+        result = extraction_chain.invoke({"stop": ["```"]})["output"]
+        
+        # Extracts only the first json
+        match_json = re.search(r'\{[^{}]*\}', result)
+        json_str = match_json.group() if match_json else result
         
         log.debug(f"Form JSON after parser:\n{json_str}")
 
@@ -273,18 +314,17 @@ This is the conversation:
 Updated JSON:
 ```json
 """
-
+        
         # TODO: convo example (optional but supported)
 
-        prompt_escaped = prompt.replace("{", "{{").replace("}", "}}")
-        return prompt_escaped
+        return prompt
 
     # Sanitize model (take away unwanted keys and null values)
     # NOTE: unwanted keys are automatically taken away by pydantic
     def sanitize(self, model):
 
         # preserve only non-null fields
-        null_fields = [None, '', 'None', 'null', 'lower-case', 'unknown', 'missing']
+        null_fields = [None, '', 'None', 'null', 'unknown', 'missing']
         model = {key: value for key, value in model.items() if value not in null_fields}
 
         return model
