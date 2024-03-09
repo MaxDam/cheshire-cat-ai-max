@@ -2,14 +2,11 @@ from typing import List, Dict
 from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from langchain.chains import LLMChain
-from langchain_core.prompts.prompt import PromptTemplate
-
 #from cat.looking_glass.prompts import MAIN_PROMPT_PREFIX
 from enum import Enum
 from cat.log import log
 import json
-import re
+from .form_utils import call_llm_and_extract_json
 
 
 # Conversational Form State
@@ -72,7 +69,7 @@ JSON:
     "confirm": """
 
         # Queries the LLM and check if user is agree or not
-        response = self._cat.call_llm_and_extract_json(confirm_prompt)
+        response = call_llm_and_extract_json(self._cat, confirm_prompt)
         return "true" in response.lower()
         
     # Check if the user wants to exit the form
@@ -81,6 +78,9 @@ JSON:
 
         # Get user message
         history = self.stringify_convo_history()
+        
+        # Get user message
+        user_message = self.cat.working_memory["user_message_json"]["text"]
 
         # Stop examples
         stop_examples = """
@@ -93,7 +93,8 @@ Examples where {"exit": true}:
 
         # Check exit prompt
         check_exit_prompt = \
-f"""Your task is to produce a JSON representing whether a user wants to exit or not.
+f"""Your task is to produce a JSON representing whether a user wants to exit or not, based on the user message.
+If you are not sure answer `false`.
 JSON must be in this format:
 ```json
 {{
@@ -114,7 +115,7 @@ JSON:
 
         # Queries the LLM and check if user is agree or not
         # Call LLM and extract json
-        response = self._cat.call_llm_and_extract_json(check_exit_prompt)
+        response = call_llm_and_extract_json(self._cat, check_exit_prompt)
         return "true" in response.lower()
 
     # Execute the dialogue step
@@ -253,7 +254,7 @@ Updated JSON:
         # TODO: convo example (optional but supported)
 
         # Call LLM and extract json
-        json_str = self._cat.call_llm_and_extract_json(prompt)
+        json_str = call_llm_and_extract_json(self._cat, prompt)
         
         log.debug(f"Form JSON after parser:\n{json_str}")
 
